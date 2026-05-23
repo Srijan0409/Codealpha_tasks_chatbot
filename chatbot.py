@@ -43,6 +43,24 @@ CSV_PATH = os.path.join(SCRIPT_DIR, "faqs.csv")
 faq_records = load_and_preprocess_faqs(CSV_PATH)
 faq_answers = [record[1] for record in faq_records]
 
+# Load original questions for "Did you mean..." suggestions
+original_questions = []
+try:
+    import csv
+    if os.path.exists(CSV_PATH):
+        with open(CSV_PATH, mode='r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader, None)  # skip header row
+            for row in reader:
+                if row:
+                    original_questions.append(row[0])
+except Exception:
+    pass
+
+# Ensure alignment or fall back
+if len(original_questions) != len(faq_records):
+    original_questions = [record[0] for record in faq_records]
+
 def get_answer(user_input):
     """
     Finds the best matching FAQ answer for a user input.
@@ -51,20 +69,32 @@ def get_answer(user_input):
         user_input (str): The raw text entered by the user.
         
     Returns:
-        str: The matched FAQ answer if similarity score is above 0.3,
-             otherwise a fallback message.
+        str: The matched FAQ answer, a suggestion, or a validation/fallback message.
     """
     if not faq_answers:
         return "Sorry, the FAQ database is currently empty or failed to load."
         
+    if not user_input or not user_input.strip():
+        return "Please type something."
+        
+    if len(user_input.strip()) < 3:
+        return "Please provide more detail (at least 3 characters)."
+        
     # Call find_best_match to retrieve index and score
     best_idx, score = find_best_match(user_input)
     
-    # Check if the similarity score is above the 0.3 threshold
-    if best_idx != -1 and score >= 0.3:
-        return faq_answers[best_idx]
-    else:
-        return "Sorry, I could not find an answer to that question."
+    # Check if the similarity score is above the thresholds
+    if best_idx != -1:
+        if score >= 0.3:
+            return faq_answers[best_idx]
+        elif 0.2 <= score < 0.3:
+            suggested_q = original_questions[best_idx] if best_idx < len(original_questions) else "another question"
+            if suggested_q.endswith('?'):
+                return f"Did you mean: '{suggested_q}'"
+            else:
+                return f"Did you mean: '{suggested_q}'?"
+            
+    return "Sorry, I could not find an answer to that question."
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
@@ -84,6 +114,11 @@ if __name__ == "__main__":
                 break
                 
             if not user_input.strip():
+                print(f"{Style.GREEN}Chatbot:{Style.ENDC} Please type something.\n")
+                continue
+                
+            if len(user_input.strip()) < 3:
+                print(f"{Style.GREEN}Chatbot:{Style.ENDC} Please provide more detail (at least 3 characters).\n")
                 continue
                 
             # Get matching answer and also retrieve details for display/debugging
@@ -94,6 +129,13 @@ if __name__ == "__main__":
                 response = faq_answers[best_idx]
                 print(f"{Style.GREEN}Chatbot:{Style.ENDC} {response}")
                 print(f"{Style.DIM}(Matched FAQ #{best_idx} with score: {score:.4f}){Style.ENDC}\n")
+            elif best_idx != -1 and 0.2 <= score < 0.3:
+                suggested_q = original_questions[best_idx] if best_idx < len(original_questions) else "another question"
+                if suggested_q.endswith('?'):
+                    print(f"{Style.GREEN}Chatbot:{Style.ENDC} Did you mean: '{suggested_q}'")
+                else:
+                    print(f"{Style.GREEN}Chatbot:{Style.ENDC} Did you mean: '{suggested_q}'?")
+                print(f"{Style.DIM}(Suggested FAQ #{best_idx} with score: {score:.4f}){Style.ENDC}\n")
             else:
                 print(f"{Style.GREEN}Chatbot:{Style.ENDC} Sorry, I could not find an answer to that question.")
                 if best_idx != -1:
