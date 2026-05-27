@@ -39,27 +39,48 @@ class Style:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(SCRIPT_DIR, "faqs.csv")
 
-# Load questions and answers to build the FAQ answers list
-faq_records = load_and_preprocess_faqs(CSV_PATH)
-faq_answers = [record[1] for record in faq_records]
-
-# Load original questions for "Did you mean..." suggestions
+# Variables to store loaded state
+faq_answers = []
 original_questions = []
-try:
-    import csv
-    if os.path.exists(CSV_PATH):
+last_loaded_mtime = 0.0
+
+def load_faq_lists():
+    global faq_answers, original_questions, last_loaded_mtime
+    
+    if not os.path.exists(CSV_PATH):
+        return
+        
+    try:
+        mtime = os.path.getmtime(CSV_PATH)
+    except OSError:
+        mtime = 0.0
+        
+    if mtime == last_loaded_mtime and faq_answers:
+        return
+        
+    faq_records = load_and_preprocess_faqs(CSV_PATH)
+    faq_answers = [record[1] for record in faq_records]
+    
+    orig_qs = []
+    try:
+        import csv
         with open(CSV_PATH, mode='r', encoding='utf-8') as f:
             reader = csv.reader(f)
             next(reader, None)  # skip header row
             for row in reader:
                 if row:
-                    original_questions.append(row[0])
-except Exception:
-    pass
+                    orig_qs.append(row[0])
+    except Exception:
+        pass
+        
+    if len(orig_qs) != len(faq_records):
+        orig_qs = [record[0] for record in faq_records]
+        
+    original_questions = orig_qs
+    last_loaded_mtime = mtime
 
-# Ensure alignment or fall back
-if len(original_questions) != len(faq_records):
-    original_questions = [record[0] for record in faq_records]
+# Initial load
+load_faq_lists()
 
 def get_answer(user_input):
     """
@@ -71,6 +92,9 @@ def get_answer(user_input):
     Returns:
         str: The matched FAQ answer, a suggestion, or a validation/fallback message.
     """
+    # Dynamically check/reload if faqs.csv has been updated
+    load_faq_lists()
+
     if not faq_answers:
         return "Sorry, the FAQ database is currently empty or failed to load."
         
