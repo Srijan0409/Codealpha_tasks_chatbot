@@ -113,6 +113,9 @@ def load_and_preprocess_faqs(csv_path):
                 for row in reader:
                     q = row[q_col]
                     a = row[a_col]
+                    # If answer contained unquoted commas, join the extra fields back
+                    if None in row and row[None]:
+                        a = a + "," + ",".join(row[None])
                     cleaned_q = preprocess_text(q)
                     cleaned_data.append((cleaned_q, a))
             else:
@@ -135,12 +138,14 @@ def load_and_preprocess_faqs(csv_path):
                     # Re-include first row as data
                     if len(first_row) >= 2:
                         cleaned_q = preprocess_text(first_row[0])
-                        cleaned_data.append((cleaned_q, first_row[1]))
+                        answer = ",".join(first_row[1:])
+                        cleaned_data.append((cleaned_q, answer))
                         
                 for row in raw_reader:
                     if len(row) >= 2:
                         cleaned_q = preprocess_text(row[0])
-                        cleaned_data.append((cleaned_q, row[1]))
+                        answer = ",".join(row[1:])
+                        cleaned_data.append((cleaned_q, answer))
                         
     except Exception as e:
         print(f"Error reading CSV: {e}")
