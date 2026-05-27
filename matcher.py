@@ -59,60 +59,85 @@ class Style:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(SCRIPT_DIR, "faqs.csv")
 
-# Load and preprocess FAQs
-print(f"{Style.CYAN}[SYSTEM] Loading FAQs from {CSV_PATH}...{Style.ENDC}")
-raw_faq_data = []
+# Variables to store loaded state
+faq_questions = []
+faq_answers = []
+original_questions = []
+vectorizer = None
+tfidf_matrix = None
+last_loaded_mtime = 0.0
 
-# If CSV doesn't exist, we can let preprocess.py's main handle it or check here
-if not os.path.exists(CSV_PATH):
-    print(f"{Style.WARNING}[WARNING] faqs.csv not found. Running preprocess.py to generate sample FAQs...{Style.ENDC}")
+def load_and_vectorize_faqs():
+    global faq_questions, faq_answers, original_questions, vectorizer, tfidf_matrix, last_loaded_mtime
+    
+    # If CSV doesn't exist, we can let preprocess.py's main handle it or check here
+    if not os.path.exists(CSV_PATH):
+        print(f"{Style.WARNING}[WARNING] faqs.csv not found. Running preprocess.py to generate sample FAQs...{Style.ENDC}")
+        try:
+            # Run preprocess.py as a script to auto-generate the sample csv
+            preprocess_script = os.path.join(SCRIPT_DIR, "preprocess.py")
+            subprocess.run([sys.executable, preprocess_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f"{Style.FAIL}[ERROR] Failed to auto-generate faqs.csv: {e}{Style.ENDC}")
+            
+    if not os.path.exists(CSV_PATH):
+        return
+
     try:
-        # Run preprocess.py as a script to auto-generate the sample csv
-        preprocess_script = os.path.join(SCRIPT_DIR, "preprocess.py")
-        subprocess.run([sys.executable, preprocess_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
-        print(f"{Style.FAIL}[ERROR] Failed to auto-generate faqs.csv: {e}{Style.ENDC}")
+        mtime = os.path.getmtime(CSV_PATH)
+    except OSError:
+        mtime = 0.0
 
-# Load the FAQs
-# load_and_preprocess_faqs returns list of (cleaned_question, answer) tuples
-cleaned_faqs = load_and_preprocess_faqs(CSV_PATH)
+    # Only reload if modified
+    if mtime == last_loaded_mtime and tfidf_matrix is not None:
+        return
 
-if not cleaned_faqs:
-    print(f"{Style.FAIL}[ERROR] No FAQ data loaded. Please make sure faqs.csv contains valid data.{Style.ENDC}")
-    # Initialize empty variables to avoid NameErrors
-    faq_questions = []
-    faq_answers = []
-    vectorizer = None
-    tfidf_matrix = None
-else:
-    # Separate questions and answers while keeping index alignment
-    # cleaned_faqs is list of (cleaned_question, answer)
-    # We also keep raw questions for display purposes by reading the CSV again,
-    # or just storing them if needed. But let's load raw data so we can print nicely.
+    print(f"{Style.CYAN}[SYSTEM] Loading and vectorizing FAQs from {CSV_PATH}...{Style.ENDC}")
+    cleaned_faqs = load_and_preprocess_faqs(CSV_PATH)
+
+    if not cleaned_faqs:
+        print(f"{Style.FAIL}[ERROR] No FAQ data loaded. Please make sure faqs.csv contains valid data.{Style.ENDC}")
+        faq_questions = []
+        faq_answers = []
+        original_questions = []
+        vectorizer = None
+        tfidf_matrix = None
+        last_loaded_mtime = mtime
+        return
+
     faq_questions = [item[0] for item in cleaned_faqs]
     faq_answers = [item[1] for item in cleaned_faqs]
     
-    # We also want to display the original questions in the demo, so let's load original questions
-    original_questions = []
+    orig_qs = []
     try:
         import csv
         with open(CSV_PATH, mode='r', encoding='utf-8') as f:
             reader = csv.reader(f)
-            header = next(reader, None)
+            next(reader, None)
             for row in reader:
                 if row:
-                    original_questions.append(row[0])
+                    orig_qs.append(row[0])
     except Exception:
-        original_questions = faq_questions  # Fallback to cleaned questions if reading fails
+        orig_qs = faq_questions
         
-    print(f"{Style.GREEN}[SUCCESS] Successfully loaded and preprocessed {len(faq_questions)} FAQ items.{Style.ENDC}")
+    original_questions = orig_qs
+    
+    try:
+        # Initialize and fit the TfidfVectorizer on the cleaned FAQ questions
+        # Since the input text is already preprocessed (lowercased, stopwords removed, lemmatized),
+        # we don't need any complex tokenization or lowercasing from TfidfVectorizer.
+        # Passing token_pattern=r"(?u)\b\w+\b" ensures single-character words aren't ignored if they are lemmatized.
+        vec = TfidfVectorizer(lowercase=False, token_pattern=r"(?u)\b\w+\b")
+        matrix = vec.fit_transform(faq_questions)
+        vectorizer = vec
+        tfidf_matrix = matrix
+        last_loaded_mtime = mtime
+        print(f"{Style.GREEN}[SUCCESS] Successfully loaded and preprocessed {len(faq_questions)} FAQ items.{Style.ENDC}")
+    except Exception as e:
+        print(f"{Style.FAIL}[ERROR] Failed to vectorize FAQs: {e}{Style.ENDC}")
 
-    # Initialize and fit the TfidfVectorizer on the cleaned FAQ questions
-    # Since the input text is already preprocessed (lowercased, stopwords removed, lemmatized),
-    # we don't need any complex tokenization or lowercasing from TfidfVectorizer.
-    # Passing token_pattern=r"(?u)\b\w+\b" ensures single-character words aren't ignored if they are lemmatized.
-    vectorizer = TfidfVectorizer(lowercase=False, token_pattern=r"(?u)\b\w+\b")
-    tfidf_matrix = vectorizer.fit_transform(faq_questions)
+# Initial load
+load_and_vectorize_faqs()
 
 
 def find_best_match(user_question):
@@ -129,6 +154,9 @@ def find_best_match(user_question):
                best_index (int): Index of the closest match, or -1 if no match.
                similarity_score (float): Cosine similarity score.
     """
+    # Dynamically check/reload if faqs.csv has been updated
+    load_and_vectorize_faqs()
+
     if not vectorizer or tfidf_matrix is None or len(faq_questions) == 0:
         print(f"{Style.FAIL}[ERROR] Vectorizer is not initialized or FAQ list is empty.{Style.ENDC}")
         return -1, 0.0
