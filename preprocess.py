@@ -3,6 +3,7 @@ import re
 import sys
 import subprocess
 import os
+import pandas as pd
 
 # Auto-install nltk if missing
 try:
@@ -91,66 +92,53 @@ def preprocess_text(text):
 
 def load_and_preprocess_faqs(csv_path):
     """
-    Loads faqs.csv, preprocesses the questions, and returns a list of (cleaned_question, answer) tuples.
+    Loads faqs.csv using pandas, preprocesses the questions, and returns
+    a tuple of three lists: (processed_questions, original_questions, original_answers).
     """
-    cleaned_data = []
+    processed_questions = []
+    original_questions = []
+    original_answers = []
+    
     if not os.path.exists(csv_path):
         print(f"Error: The file {csv_path} was not found.")
-        return cleaned_data
+        return processed_questions, original_questions, original_answers
         
     try:
+        # Since the CSV contains unquoted commas in the answer field,
+        # we read using csv.reader, re-assemble split fields, and convert to pandas DataFrame.
+        rows = []
         with open(csv_path, mode='r', encoding='utf-8') as infile:
-            # We first try to read with DictReader
-            reader = csv.DictReader(infile)
-            
-            # Normalize headers
-            headers = [h.strip().lower() for h in (reader.fieldnames or [])]
-            
-            if 'question' in headers and 'answer' in headers:
-                # Map headers back to their original spelling
-                q_col = reader.fieldnames[headers.index('question')]
-                a_col = reader.fieldnames[headers.index('answer')]
+            reader = csv.reader(infile)
+            header = next(reader, None)
+            if header:
                 for row in reader:
-                    q = row[q_col]
-                    a = row[a_col]
-                    # If answer contained unquoted commas, join the extra fields back
-                    if None in row and row[None]:
-                        a = a + "," + ",".join(row[None])
-                    cleaned_q = preprocess_text(q)
-                    cleaned_data.append((cleaned_q, a))
-            else:
-                # Fallback: assume column 0 is question, column 1 is answer
-                infile.seek(0)
-                raw_reader = csv.reader(infile)
-                
-                # Check if there is a header row to skip
-                try:
-                    first_row = next(raw_reader)
-                except StopIteration:
-                    return cleaned_data
-                    
-                # Simple check if first row is header
-                first_row_normalized = [col.strip().lower() for col in first_row]
-                if 'question' in first_row_normalized or 'answer' in first_row_normalized:
-                    # Skip first row
-                    pass
-                else:
-                    # Re-include first row as data
-                    if len(first_row) >= 2:
-                        cleaned_q = preprocess_text(first_row[0])
-                        answer = ",".join(first_row[1:])
-                        cleaned_data.append((cleaned_q, answer))
-                        
-                for row in raw_reader:
                     if len(row) >= 2:
-                        cleaned_q = preprocess_text(row[0])
-                        answer = ",".join(row[1:])
-                        cleaned_data.append((cleaned_q, answer))
+                        q = row[0]
+                        a = ",".join(row[1:])
+                        rows.append({"question": q, "answer": a})
                         
-    except Exception as e:
-        print(f"Error reading CSV: {e}")
+        df = pd.DataFrame(rows)
         
-    return cleaned_data
+        # Normalize column headers to lowercase and strip whitespace
+        df.columns = df.columns.str.strip().str.lower()
+        
+        if 'question' in df.columns and 'answer' in df.columns:
+            # Drop rows where question or answer is missing
+            df = df.dropna(subset=['question', 'answer'])
+            
+            for _, row in df.iterrows():
+                q = str(row['question'])
+                a = str(row['answer'])
+                cleaned_q = preprocess_text(q)
+                processed_questions.append(cleaned_q)
+                original_questions.append(q)
+                original_answers.append(a)
+        else:
+            print("Error: CSV file must contain 'question' and 'answer' columns.")
+    except Exception as e:
+        print(f"Error reading CSV with pandas: {e}")
+        
+    return processed_questions, original_questions, original_answers
 
 if __name__ == "__main__":
     # Resolve CSV file path in the same directory as the script
@@ -175,7 +163,9 @@ if __name__ == "__main__":
             print(f"Failed to create sample CSV: {e}")
 
     print(f"Processing CSV file: {csv_path}")
-    processed_faqs = load_and_preprocess_faqs(csv_path)
+    processed_questions, original_questions, original_answers = load_and_preprocess_faqs(csv_path)
     
-    print("\nResulting Cleaned Python List:")
-    print(processed_faqs)
+    print("\nResulting Cleaned Python Lists:")
+    print("Questions sample (first 2):", processed_questions[:2])
+    print("Original Questions sample (first 2):", original_questions[:2])
+    print("Answers sample (first 2):", original_answers[:2])
