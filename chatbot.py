@@ -58,25 +58,7 @@ def load_faq_lists():
     if mtime == last_loaded_mtime and faq_answers:
         return
         
-    faq_records = load_and_preprocess_faqs(CSV_PATH)
-    faq_answers = [record[1] for record in faq_records]
-    
-    orig_qs = []
-    try:
-        import csv
-        with open(CSV_PATH, mode='r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            next(reader, None)  # skip header row
-            for row in reader:
-                if row:
-                    orig_qs.append(row[0])
-    except Exception:
-        pass
-        
-    if len(orig_qs) != len(faq_records):
-        orig_qs = [record[0] for record in faq_records]
-        
-    original_questions = orig_qs
+    faq_questions, original_questions, faq_answers = load_and_preprocess_faqs(CSV_PATH)
     last_loaded_mtime = mtime
 
 # Initial load
